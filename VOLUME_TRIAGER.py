@@ -41,6 +41,7 @@ class VOLUME_TRIAGERWidget(ScriptedLoadableModuleWidget):
         self.input_folder = None
         self.case_paths = []
         self.current_index = -1
+        self.loaded_case_node = None
 
     def setup(self):
         ScriptedLoadableModuleWidget.setup(self)
@@ -149,6 +150,7 @@ class VOLUME_TRIAGERWidget(ScriptedLoadableModuleWidget):
         except Exception as exc:
             self._set_status(f"Failed to load {os.path.basename(path)}: {exc}", error=True)
             return
+        self.loaded_case_node = node
         self._apply_brain_window(node)
         basename = os.path.basename(path)
         patient = PATIENT_ID_REGEX.match(basename)
@@ -201,31 +203,50 @@ class VOLUME_TRIAGERWidget(ScriptedLoadableModuleWidget):
 
     def save_current_volume(self):
         if self.current_index < 0 or not self.input_folder:
+            print("[VOLUME_TRIAGER] save aborted: no current case or input folder")
             return False
         node = self._most_recent_volume_node()
         if node is None:
             self._set_status("No volume in scene — nothing to save.", error=True)
             return False
-        storage = node.GetStorageNode()
-        source_path = storage.GetFileName() if storage else None
-        if source_path:
-            out_basename = os.path.basename(source_path)
+        case_basename = os.path.basename(self.case_paths[self.current_index])
+        if node is self.loaded_case_node:
+            # No replacement was loaded — preserve the original case basename.
+            out_basename = case_basename
         else:
-            out_basename = os.path.basename(self.case_paths[self.current_index])
-            self._set_status(
-                f"Loaded volume has no file path; falling back to case name {out_basename}.",
-                error=True,
-            )
+            # User loaded a replacement; use that file's basename if available.
+            storage = node.GetStorageNode()
+            source_path = storage.GetFileName() if storage else None
+            out_basename = os.path.basename(source_path) if source_path else case_basename
+            print(f"[VOLUME_TRIAGER] using replacement basename: {out_basename}")
         out_dir = os.path.join(self.input_folder, TRIAGED_SUBDIR)
-        os.makedirs(out_dir, exist_ok=True)
+        try:
+            os.makedirs(out_dir, exist_ok=True)
+        except Exception as exc:
+            msg = f"Cannot create {out_dir}: {exc}"
+            print(f"[VOLUME_TRIAGER] {msg}")
+            self._set_status(msg, error=True)
+            return False
         out_path = os.path.join(out_dir, out_basename)
-        ok = slicer.util.saveNode(node, out_path)
-        if ok:
+        print(
+            f"[VOLUME_TRIAGER] saving node {node.GetName()!r} "
+            f"(class={node.GetClassName()}) to {out_path}"
+        )
+        try:
+            ok = slicer.util.saveNode(node, out_path)
+        except Exception as exc:
+            msg = f"saveNode raised: {exc}"
+            print(f"[VOLUME_TRIAGER] {msg}")
+            self._set_status(msg, error=True)
+            return False
+        on_disk = os.path.exists(out_path)
+        print(f"[VOLUME_TRIAGER] saveNode returned {ok!r}; file on disk: {on_disk}")
+        if on_disk:
             self._set_status(f"Saved → {out_path}")
             self._refresh_list_colors()
-        else:
-            self._set_status(f"Failed to save → {out_path}", error=True)
-        return bool(ok)
+            return True
+        self._set_status(f"Failed to save → {out_path} (saveNode={ok!r})", error=True)
+        return False
 
     def _refresh_list_colors(self):
         if not self.input_folder:
