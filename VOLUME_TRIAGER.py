@@ -14,6 +14,8 @@ PATIENT_ID_REGEX = re.compile(r'^([SN]\d+)')
 STUDY_ID_REGEX = re.compile(r'(CSRA\d+)')
 VOLUME_GLOB = "*.nii.gz"
 TRIAGED_SUBDIR = "triaged"
+BRAIN_WINDOW = 80
+BRAIN_LEVEL = 40
 
 
 class VOLUME_TRIAGER(ScriptedLoadableModule):
@@ -133,10 +135,11 @@ class VOLUME_TRIAGERWidget(ScriptedLoadableModuleWidget):
         path = self.case_paths[index]
         slicer.mrmlScene.Clear(0)
         try:
-            slicer.util.loadVolume(path)
+            node = slicer.util.loadVolume(path)
         except Exception as exc:
             self._set_status(f"Failed to load {os.path.basename(path)}: {exc}", error=True)
             return
+        self._apply_brain_window(node)
         basename = os.path.basename(path)
         patient = PATIENT_ID_REGEX.match(basename)
         study = STUDY_ID_REGEX.search(basename)
@@ -159,11 +162,22 @@ class VOLUME_TRIAGERWidget(ScriptedLoadableModuleWidget):
         if not path:
             return
         try:
-            slicer.util.loadVolume(path)
+            node = slicer.util.loadVolume(path)
         except Exception as exc:
             self._set_status(f"Failed to load {os.path.basename(path)}: {exc}", error=True)
             return
+        self._apply_brain_window(node)
         self._set_status(f"Loaded replacement: {os.path.basename(path)}")
+
+    def _apply_brain_window(self, node):
+        if node is None:
+            return
+        display = node.GetDisplayNode()
+        if display is None:
+            return
+        display.AutoWindowLevelOff()
+        display.SetWindow(BRAIN_WINDOW)
+        display.SetLevel(BRAIN_LEVEL)
 
     def _most_recent_volume_node(self):
         nodes = slicer.util.getNodesByClass("vtkMRMLScalarVolumeNode")
