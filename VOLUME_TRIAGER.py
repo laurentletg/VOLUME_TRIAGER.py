@@ -122,7 +122,17 @@ class VOLUME_TRIAGERWidget(ScriptedLoadableModuleWidget):
             return
         self._set_nav_enabled(True)
         self.current_index = -1
-        self.list_widget.setCurrentRow(0)
+        self._refresh_list_colors()
+        self.goto_index(0)
+
+    def goto_index(self, index):
+        if index < 0 or index >= len(self.case_paths):
+            return
+        self.list_widget.blockSignals(True)
+        self.list_widget.setCurrentRow(index)
+        self.list_widget.blockSignals(False)
+        self.current_index = index
+        self.load_case(index)
 
     def on_list_selection(self):
         row = self.list_widget.currentRow
@@ -143,11 +153,17 @@ class VOLUME_TRIAGERWidget(ScriptedLoadableModuleWidget):
         basename = os.path.basename(path)
         patient = PATIENT_ID_REGEX.match(basename)
         study = STUDY_ID_REGEX.search(basename)
+        patient_id = patient.group(1) if patient else "—"
+        study_id = study.group(1) if study else "—"
         self.index_label.setText(f"{index + 1} / {len(self.case_paths)}")
-        self.patient_label.setText(patient.group(1) if patient else "—")
-        self.study_label.setText(study.group(1) if study else "—")
+        self.patient_label.setText(patient_id)
+        self.study_label.setText(study_id)
         self.file_label.setText(basename)
-        self._set_status(f"Loaded {basename}")
+        print(f"[VOLUME_TRIAGER] case {index + 1}/{len(self.case_paths)} | "
+              f"Patient ID: {patient_id} | Study ID: {study_id} | File: {basename}")
+        if study_id != "—":
+            qt.QApplication.clipboard().setText(study_id)
+        self._set_status(f"Loaded {basename}  (study ID copied to clipboard)")
 
     def on_load_replacement(self):
         if self.current_index < 0:
@@ -206,13 +222,34 @@ class VOLUME_TRIAGERWidget(ScriptedLoadableModuleWidget):
         ok = slicer.util.saveNode(node, out_path)
         if ok:
             self._set_status(f"Saved → {out_path}")
+            self._refresh_list_colors()
         else:
             self._set_status(f"Failed to save → {out_path}", error=True)
         return bool(ok)
 
+    def _refresh_list_colors(self):
+        if not self.input_folder:
+            return
+        triaged_dir = os.path.join(self.input_folder, TRIAGED_SUBDIR)
+        triaged_study_ids = set()
+        if os.path.isdir(triaged_dir):
+            for fname in os.listdir(triaged_dir):
+                m = STUDY_ID_REGEX.search(fname)
+                if m:
+                    triaged_study_ids.add(m.group(1))
+        green = qt.QColor("#1b5e20")
+        red = qt.QColor("#b00020")
+        for i, path in enumerate(self.case_paths):
+            item = self.list_widget.item(i)
+            if item is None:
+                continue
+            m = STUDY_ID_REGEX.search(os.path.basename(path))
+            study_id = m.group(1) if m else None
+            item.setForeground(green if study_id and study_id in triaged_study_ids else red)
+
     def on_previous(self):
         if self.current_index > 0:
-            self.list_widget.setCurrentRow(self.current_index - 1)
+            self.goto_index(self.current_index - 1)
 
     def on_next(self):
         if not self.save_current_volume():
@@ -220,7 +257,7 @@ class VOLUME_TRIAGERWidget(ScriptedLoadableModuleWidget):
         if self.current_index >= len(self.case_paths) - 1:
             self._set_status("Reached last case.")
             return
-        self.list_widget.setCurrentRow(self.current_index + 1)
+        self.goto_index(self.current_index + 1)
 
     def _set_status(self, text, error=False):
         color = "#b00020" if error else "#1b5e20"
