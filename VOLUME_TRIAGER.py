@@ -42,6 +42,7 @@ class VOLUME_TRIAGERWidget(ScriptedLoadableModuleWidget):
         self.case_paths = []
         self.current_index = -1
         self.loaded_case_node = None
+        self.current_patient_id = None
 
     def setup(self):
         ScriptedLoadableModuleWidget.setup(self)
@@ -157,6 +158,7 @@ class VOLUME_TRIAGERWidget(ScriptedLoadableModuleWidget):
         study = STUDY_ID_REGEX.search(basename)
         patient_id = patient.group(1) if patient else "—"
         study_id = study.group(1) if study else "—"
+        self.current_patient_id = patient.group(1) if patient else None
         self.index_label.setText(f"{index + 1} / {len(self.case_paths)}")
         self.patient_label.setText(patient_id)
         self.study_label.setText(study_id)
@@ -214,10 +216,19 @@ class VOLUME_TRIAGERWidget(ScriptedLoadableModuleWidget):
             # No replacement was loaded — preserve the original case basename.
             out_basename = case_basename
         else:
-            # User loaded a replacement; use that file's basename if available.
+            # User loaded a replacement; use that file's basename, prefixed with
+            # the current patient ID if it's not already there.
             storage = node.GetStorageNode()
             source_path = storage.GetFileName() if storage else None
-            out_basename = os.path.basename(source_path) if source_path else case_basename
+            replacement_basename = os.path.basename(source_path) if source_path else case_basename
+            existing = PATIENT_ID_REGEX.match(replacement_basename)
+            if (
+                self.current_patient_id
+                and (existing is None or existing.group(1) != self.current_patient_id)
+            ):
+                out_basename = f"{self.current_patient_id}_{replacement_basename}"
+            else:
+                out_basename = replacement_basename
             print(f"[VOLUME_TRIAGER] using replacement basename: {out_basename}")
         out_dir = os.path.join(self.input_folder, TRIAGED_SUBDIR)
         try:
